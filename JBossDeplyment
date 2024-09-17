@@ -1,0 +1,107 @@
+#!/bin/bash
+
+# JBoss server credentials and URL
+JBOSS_URL="https://<jboss-server-ip>:9993/management"
+USERNAME="admin"
+PASSWORD="password"
+
+# Module and file paths
+MODULE_NAME="com.example"
+MODULE_PATH="/opt/jboss/modules/com/example/main/"
+JAR_FILE="/path/to/your-module.jar"
+
+# WAR file path
+WAR_FILE="/path/to/your-app.war"
+WAR_DEPLOYMENT_NAME="your-app.war"
+
+# DataSource configuration
+DS_NAME="ExampleDS"
+DS_JNDI_NAME="java:/jdbc/ExampleDS"
+DB_URL="jdbc:mysql://localhost:3306/exampledb"
+DB_USERNAME="dbuser"
+DB_PASSWORD="dbpassword"
+DRIVER_NAME="mysql"
+
+# Backup paths
+BACKUP_DIR="/path/to/backup/"
+mkdir -p "$BACKUP_DIR"
+
+### 1. Create a module and upload a JAR file
+
+echo "Creating module directory: $MODULE_PATH"
+mkdir -p "$MODULE_PATH"
+cp "$JAR_FILE" "$MODULE_PATH"
+
+# Create module.xml in the module directory
+echo "Creating module.xml"
+cat <<EOF > "$MODULE_PATH/module.xml"
+<module xmlns="urn:jboss:module:1.1" name="$MODULE_NAME">
+    <resources>
+        <resource-root path="your-module.jar"/>
+    </resources>
+    <dependencies>
+        <module name="javax.api"/>
+    </dependencies>
+</module>
+EOF
+
+echo "Module created at: $MODULE_PATH"
+
+### 2. Create a new Data Source
+
+echo "Creating data source: $DS_NAME"
+curl -k -u $USERNAME:$PASSWORD --header "Content-Type: application/json" \
+  --data '{
+    "operation":"add",
+    "address":[{"subsystem":"datasources"},{"data-source":"'"$DS_NAME"'"}],
+    "name":"'"$DS_NAME"'",
+    "jndi-name":"'"$DS_JNDI_NAME"'",
+    "enabled":true,
+    "connection-url":"'"$DB_URL"'",
+    "driver-name":"'"$DRIVER_NAME"'",
+    "user-name":"'"$DB_USERNAME"'",
+    "password":"'"$DB_PASSWORD"'",
+    "min-pool-size":10,
+    "max-pool-size":20
+}' $JBOSS_URL
+
+### 3. Backup the Data Source configuration
+
+echo "Backing up data source configuration"
+curl -k -u $USERNAME:$PASSWORD --header "Content-Type: application/json" \
+  --data '{"operation":"read-resource","address":[{"subsystem":"datasources"},{"data-source":"'"$DS_NAME"'"}],"recursive":true}' \
+  $JBOSS_URL > "$BACKUP_DIR/${DS_NAME}_backup.json"
+
+echo "Backup of Data Source $DS_NAME saved at $BACKUP_DIR/${DS_NAME}_backup.json"
+
+### 4. Deploy a new WAR file
+
+echo "Deploying WAR file: $WAR_FILE"
+curl -k -u $USERNAME:$PASSWORD --header "Content-Type: application/json" \
+  --form "file=@$WAR_FILE" \
+  $JBOSS_URL/deployment
+
+curl -k -u $USERNAME:$PASSWORD --header "Content-Type: application/json" \
+  --data '{
+    "operation": "add",
+    "address": [{"deployment":"'"$WAR_DEPLOYMENT_NAME"'"}],
+    "enabled": true
+}' $JBOSS_URL
+
+### 5. Backup the WAR deployment configuration
+
+echo "Backing up WAR deployment configuration"
+curl -k -u $USERNAME:$PASSWORD --header "Content-Type: application/json" \
+  --data '{"operation":"read-resource","address":[{"deployment":"'"$WAR_DEPLOYMENT_NAME"'"}],"recursive":true}' \
+  $JBOSS_URL > "$BACKUP_DIR/${WAR_DEPLOYMENT_NAME}_backup.json"
+
+echo "Backup of WAR deployment $WAR_DEPLOYMENT_NAME saved at $BACKUP_DIR/${WAR_DEPLOYMENT_NAME}_backup.json"
+
+### 6. Restart the server to apply changes
+
+echo "Restarting the server"
+curl -k -u $USERNAME:$PASSWORD --header "Content-Type: application/json" \
+  --data '{"operation":"reload", "address":[]}' \
+  $JBOSS_URL
+
+echo "Server restarted"
