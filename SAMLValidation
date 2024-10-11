@@ -1,0 +1,129 @@
+<dependency>
+    <groupId>org.opensaml</groupId>
+    <artifactId>opensaml-core</artifactId>
+    <version>4.1.1</version>
+</dependency>
+<dependency>
+    <groupId>org.opensaml</groupId>
+    <artifactId>opensaml-saml-impl</artifactId>
+    <version>4.1.1</version>
+</dependency>
+<dependency>
+    <groupId>org.opensaml</groupId>
+    <artifactId>opensaml-security-impl</artifactId>
+    <version>4.1.1</version>
+</dependency>
+<dependency>
+    <groupId>org.opensaml</groupId>
+    <artifactId>opensaml-xmlsec-impl</artifactId>
+    <version>4.1.1</version>
+</dependency>
+<dependency>
+    <groupId>org.apache.commons</groupId>
+    <artifactId>commons-lang3</artifactId>
+    <version>3.12.0</version>
+</dependency>
+import org.opensaml.core.xml.XMLObject;
+import org.opensaml.core.xml.config.XMLObjectProviderRegistrySupport;
+import org.opensaml.saml.saml2.core.Response;
+import org.opensaml.saml.saml2.encryption.Decrypter;
+import org.opensaml.saml.saml2.encryption.EncryptedElementTypeEncryptedKeyResolver;
+import org.opensaml.saml.saml2.encryption.Encrypter;
+import org.opensaml.security.x509.X509Credential;
+import org.opensaml.xmlsec.encryption.support.DecryptionException;
+import org.opensaml.xmlsec.encryption.support.EncryptionConstants;
+import org.opensaml.xmlsec.encryption.support.EncryptedKeyResolver;
+import org.opensaml.xmlsec.encryption.support.EncryptionException;
+import org.opensaml.xmlsec.signature.support.SignatureValidator;
+import org.opensaml.xmlsec.signature.Signature;
+import org.opensaml.xmlsec.signature.impl.SignatureImpl;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import java.io.ByteArrayInputStream;
+import java.io.FileInputStream;
+import java.io.InputStream;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.util.Collections;
+
+public class SAMLValidator {
+
+    public static void main(String[] args) throws Exception {
+        String samlResponseXml = "<SAMLResponse>...</SAMLResponse>";  // Replace with your SAML response
+        String certificatePath = "/path/to/certificate.crt";         // Replace with the path to your certificate
+
+        // Step 1: Parse SAML Response
+        Response samlResponse = parseSAMLResponse(samlResponseXml);
+
+        // Step 2: Load X509 Certificate
+        X509Certificate cert = loadCertificate(certificatePath);
+        X509Credential credential = createCredential(cert);
+
+        // Step 3: Decrypt if Encrypted
+        Response decryptedResponse = decryptSAMLResponse(samlResponse, credential);
+
+        // Step 4: Validate Signature
+        validateSignature(decryptedResponse, credential);
+
+        System.out.println("SAML Response validated successfully.");
+    }
+
+    // Parses the SAML Response XML string into a Response object
+    public static Response parseSAMLResponse(String samlResponseXml) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setNamespaceAware(true);
+        DocumentBuilder builder = factory.newDocumentBuilder();
+        Document document = builder.parse(new ByteArrayInputStream(samlResponseXml.getBytes()));
+        Element element = document.getDocumentElement();
+        
+        XMLObject xmlObject = XMLObjectProviderRegistrySupport.getUnmarshallerFactory()
+                .getUnmarshaller(element).unmarshall(element);
+        
+        return (Response) xmlObject;
+    }
+
+    // Loads an X509 certificate from a file
+    public static X509Certificate loadCertificate(String certificatePath) throws Exception {
+        try (InputStream inStream = new FileInputStream(certificatePath)) {
+            CertificateFactory cf = CertificateFactory.getInstance("X.509");
+            return (X509Certificate) cf.generateCertificate(inStream);
+        }
+    }
+
+    // Creates an X509Credential from a certificate
+    public static X509Credential createCredential(X509Certificate cert) {
+        return new X509Credential() {
+            @Override
+            public X509Certificate getEntityCertificate() {
+                return cert;
+            }
+        };
+    }
+
+    // Decrypts the SAML Response if it's encrypted
+    public static Response decryptSAMLResponse(Response encryptedResponse, X509Credential credential) throws DecryptionException {
+        if (encryptedResponse.getEncryptedAssertions().isEmpty()) {
+            return encryptedResponse; // Not encrypted, return as-is
+        }
+
+        Decrypter decrypter = new Decrypter(
+            null, null, new EncryptedElementTypeEncryptedKeyResolver(Collections.singletonList(credential))
+        );
+        decrypter.setRootInNewDocument(true);
+
+        return decrypter.decrypt(encryptedResponse.getEncryptedAssertions().get(0));
+    }
+
+    // Validates the signature of the SAML Response
+    public static void validateSignature(Response samlResponse, X509Credential credential) throws Exception {
+        Signature signature = samlResponse.getSignature();
+        if (signature == null) {
+            throw new IllegalArgumentException("SAML Response does not contain a signature");
+        }
+
+        SignatureValidator.validate(signature, credential);
+    }
+}
